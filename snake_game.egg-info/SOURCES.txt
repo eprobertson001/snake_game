@@ -1,0 +1,13 @@
+DISTRIBUTION.md
+LICENSE
+MANIFEST.in
+README.md
+requirements.txt
+setup.py
+.github/copilot-instructions.md
+snake_game.egg-info/PKG-INFO
+snake_game.egg-info/SOURCES.txt
+snake_game.egg-info/dependency_links.txt
+snake_game.egg-info/entry_points.txt
+snake_game.egg-info/requires.txt
+snake_game.egg-info/top_level.txt
