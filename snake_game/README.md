@@ -4,14 +4,11 @@ A classic Snake game implementation in Python using pygame, recreating the nosta
 
 ## Features
 
-- 🐍 Classic Snake gameplay mechanics
-- 🎮 Smooth keyboard controls (Arrow keys or WASD)
-- 🍎 Random food generation
-- 📊 Real-time score tracking
-- 💀 Collision detection (walls and self)
-- 🎨 Clean, retro-style graphics
-- ⏸️ Pause functionality
-- 🔄 Game restart option
+- Classic Snake gameplay mechanics
+- Random food generation
+- Real-time score tracking
+- Collision detection (walls and self)
+- Clean, retro-style graphics
 
 ## Requirements
 
@@ -60,8 +57,6 @@ snake_game/
 ├── snake_game.py          # Main game file
 ├── requirements.txt       # Python dependencies
 ├── README.md             # This file
-└── .github/
-    └── copilot-instructions.md
 ```
 
 ## Development
