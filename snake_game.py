@@ -50,7 +50,7 @@ class Direction(Enum):
 
 class GameState(Enum):
     """Enumeration for different game states."""
-    MENU = 1
+    SCREENSAVER = 1
     PLAYING = 2
     PAUSED = 3
     GAME_OVER = 4
@@ -338,6 +338,7 @@ class Game:
         self.big_font = pygame.font.Font(None, 72)
         
         self.reset_game()
+        self.state = GameState.SCREENSAVER  # Set initial state after reset
     
     def reset_game(self):
         """Reset the game to initial state."""
@@ -347,9 +348,12 @@ class Game:
         self.score = 0
         self.apples_eaten = 0
         self.speed = INITIAL_SPEED
-        self.state = GameState.MENU
         self.portal_open = False
         self.transition_timer = 0
+        
+        # Screensaver properties - reset these too
+        self.auto_direction_timer = 0
+        self.auto_direction_change_interval = 60  # Change direction every 1 second at 60 FPS
         
         # Ensure food doesn't spawn on snake or obstacles
         self.respawn_food_safely()
@@ -363,14 +367,24 @@ class Game:
                 break
     
     def handle_input(self):
-        """Handle keyboard input."""
+        """Handle keyboard and mouse input."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
             
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if self.state == GameState.SCREENSAVER:
+                    # Check if "New Game" button was clicked
+                    mouse_x, mouse_y = event.pos
+                    button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 - 25, 200, 50)
+                    if button_rect.collidepoint(mouse_x, mouse_y):
+                        self.reset_game()
+                        self.state = GameState.PLAYING
+            
             if event.type == pygame.KEYDOWN:
-                if self.state == GameState.MENU:
+                if self.state == GameState.SCREENSAVER:
                     if event.key == pygame.K_SPACE:
+                        self.reset_game()
                         self.state = GameState.PLAYING
                 
                 elif self.state == GameState.PLAYING:
@@ -401,7 +415,7 @@ class Game:
                         self.state = GameState.PLAYING
                     elif event.key == pygame.K_m:
                         self.reset_game()
-                        self.state = GameState.MENU
+                        self.state = GameState.SCREENSAVER
                 
                 # Global controls
                 if event.key == pygame.K_ESCAPE:
@@ -426,20 +440,90 @@ class Game:
         if not self.portal_open:
             return False
         
-        # Check if all snake segments are above the top border
-        for x, y in self.snake.body:
-            if y >= 0:  # Still in play area
-                return False
-        return True
+        if len(self.snake.body) == 0:
+            return False
+        
+        # Portal area is in the center of the screen
+        portal_center = GRID_WIDTH // 2
+        portal_width_in_grids = 3  # Make portal 3 grid units wide (more generous)
+        portal_left = portal_center - portal_width_in_grids // 2
+        portal_right = portal_center + portal_width_in_grids // 2
+        
+        # Check if all snake segments are above the visible play area (y < 0)
+        all_segments_through = all(y < 0 for x, y in self.snake.body)
+        
+        # At least one segment should have been in the portal area
+        any_segment_in_portal = any(portal_left <= x <= portal_right for x, y in self.snake.body)
+        
+        return all_segments_through and any_segment_in_portal
     
     def update(self):
         """Update game logic."""
+        if self.state == GameState.SCREENSAVER:
+            # Auto-pilot the snake for screensaver
+            self.auto_direction_timer += 1
+            
+            # Move snake
+            self.snake.move()
+            
+            # Check if snake needs to turn to avoid walls or obstacles
+            head_x, head_y = self.snake.body[0]
+            current_direction = self.snake.direction
+            
+            # Look ahead to see if we need to turn
+            dx, dy = current_direction.value
+            next_x, next_y = head_x + dx, head_y + dy
+            
+            # Check if next position would cause collision
+            will_hit_wall = (next_x < 0 or next_x >= GRID_WIDTH or 
+                           next_y < 0 or next_y >= GRID_HEIGHT)
+            will_hit_self = (next_x, next_y) in self.snake.body
+            will_hit_obstacle = self.level_manager.check_collision((next_x, next_y))
+            
+            if (will_hit_wall or will_hit_self or will_hit_obstacle or 
+                self.auto_direction_timer >= self.auto_direction_change_interval):
+                # Find a safe direction
+                safe_directions = []
+                for direction in Direction:
+                    test_dx, test_dy = direction.value
+                    test_x, test_y = head_x + test_dx, head_y + test_dy
+                    
+                    # Don't go backwards
+                    if direction.value == (-dx, -dy):
+                        continue
+                    
+                    # Check if this direction is safe
+                    if (0 <= test_x < GRID_WIDTH and 0 <= test_y < GRID_HEIGHT and
+                        (test_x, test_y) not in self.snake.body and
+                        not self.level_manager.check_collision((test_x, test_y))):
+                        safe_directions.append(direction)
+                
+                if safe_directions:
+                    self.snake.direction = random.choice(safe_directions)
+                    self.auto_direction_timer = 0
+            
+            # Check food collision
+            if self.snake.body[0] == self.food.position:
+                self.snake.grow()
+                self.respawn_food_safely()
+            
+            # If snake gets too long, reset it
+            if len(self.snake.body) > 20:
+                self.snake.reset()
+            
+            return
+        
         if self.state == GameState.LEVEL_TRANSITION:
             self.transition_timer += 1
-            if self.transition_timer > 180:  # 3 seconds at 60 FPS
+            if self.transition_timer > 180:  # 3 seconds at 60 FPS (fixed rate)
                 self.level_manager.next_level()
                 self.portal_open = False
                 self.apples_eaten = 0
+                
+                # Reset snake to starting position for new level
+                self.snake.reset()
+                self.respawn_food_safely()
+                
                 self.state = GameState.PLAYING
                 self.transition_timer = 0
             return
@@ -454,11 +538,8 @@ class Game:
         # Move snake
         self.snake.move()
         
-        # Check portal collision and level progression
-        if self.portal_open and self.check_portal_collision():
-            # Allow snake to move through portal
-            pass
-        elif self.portal_open and self.snake_fully_through_portal():
+        # Check if snake has fully exited through portal first (before other collision checks)
+        if self.portal_open and self.snake_fully_through_portal():
             # Transition to next level
             self.state = GameState.LEVEL_TRANSITION
             self.transition_timer = 0
@@ -481,12 +562,16 @@ class Game:
         if self.portal_open:
             # Allow movement through portal area
             portal_center = GRID_WIDTH // 2
-            portal_left = portal_center - (PORTAL_WIDTH // (2 * GRID_SIZE))
-            portal_right = portal_center + (PORTAL_WIDTH // (2 * GRID_SIZE))
+            portal_width_in_grids = 3  # Same as in snake_fully_through_portal
+            portal_left = portal_center - portal_width_in_grids // 2
+            portal_right = portal_center + portal_width_in_grids // 2
             
-            # If snake is in portal area, allow movement beyond normal boundaries
+            # If snake head is in portal area or has passed through, allow movement
             if portal_left <= head_x <= portal_right and head_y <= -1:
                 pass  # Allow portal movement
+            # Also allow if any part of snake is still going through portal
+            elif any(portal_left <= x <= portal_right and y < 0 for x, y in self.snake.body):
+                pass  # Snake is in process of exiting
             elif self.snake.check_wall_collision():
                 self.state = GameState.GAME_OVER
                 return
@@ -514,15 +599,6 @@ class Game:
         text_rect = text_surface.get_rect()
         text_rect.center = (x, y)
         self.screen.blit(text_surface, text_rect)
-    
-    def draw_menu(self):
-        """Draw the main menu."""
-        self.screen.fill(BLACK)
-        
-        self.draw_text("SNAKE GAME", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 100, self.big_font, GREEN)
-        self.draw_text("Press SPACE to Start", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
-        self.draw_text("Use Arrow Keys or WASD to Move", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 40)
-        self.draw_text("Press ESC to Quit", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 80)
     
     def draw_game(self):
         """Draw the game screen."""
@@ -597,10 +673,51 @@ class Game:
             self.draw_text(f"{countdown}", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 60, 
                           self.big_font, WHITE)
 
+    def draw_screensaver(self):
+        """Draw the screensaver with autonomous snake and New Game button."""
+        # Draw the same game background
+        self.screen.fill(BLACK)
+        
+        # Draw blue frame around the arena
+        frame_rect = pygame.Rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)
+        pygame.draw.rect(self.screen, BLUE, frame_rect, FRAME_WIDTH)
+        
+        # Draw level obstacles (screensaver uses level 1 - no obstacles)
+        self.level_manager.draw(self.screen)
+        
+        # Draw game objects
+        self.snake.draw(self.screen)
+        self.food.draw(self.screen)
+        
+        # Draw semi-transparent overlay
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+        overlay.set_alpha(100)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, 0))
+        
+        # Draw "New Game" button
+        button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 - 25, 200, 50)
+        
+        # Check if mouse is hovering over button
+        mouse_pos = pygame.mouse.get_pos()
+        is_hovering = button_rect.collidepoint(mouse_pos)
+        
+        # Button colors
+        button_color = (0, 150, 0) if is_hovering else (0, 100, 0)
+        border_color = (0, 255, 0) if is_hovering else (0, 200, 0)
+        
+        # Draw button
+        pygame.draw.rect(self.screen, button_color, button_rect, border_radius=10)
+        pygame.draw.rect(self.screen, border_color, button_rect, 3, border_radius=10)
+        
+        # Draw button text
+        button_font = pygame.font.Font(None, 48)
+        self.draw_text("New Game", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2, button_font, WHITE)
+
     def draw(self):
         """Draw the current game state."""
-        if self.state == GameState.MENU:
-            self.draw_menu()
+        if self.state == GameState.SCREENSAVER:
+            self.draw_screensaver()
         elif self.state == GameState.PLAYING:
             self.draw_game()
         elif self.state == GameState.PAUSED:
@@ -620,7 +737,12 @@ class Game:
             running = self.handle_input()
             self.update()
             self.draw()
-            self.clock.tick(self.speed)
+            
+            # Use different frame rates for different states
+            if self.state == GameState.LEVEL_TRANSITION:
+                self.clock.tick(60)  # Fixed 60 FPS for consistent countdown timing
+            else:
+                self.clock.tick(self.speed)  # Variable speed for gameplay
         
         pygame.quit()
         sys.exit()
