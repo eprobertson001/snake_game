@@ -15,10 +15,13 @@ pygame.init()
 
 # Constants
 WINDOW_WIDTH = 800
-WINDOW_HEIGHT = 600
+WINDOW_HEIGHT = 650  # Increased height to accommodate header
+HEADER_HEIGHT = 50   # Height of the header area
+GAME_AREA_Y = HEADER_HEIGHT  # Y offset for game area
+GAME_HEIGHT = WINDOW_HEIGHT - HEADER_HEIGHT  # Actual game area height
 GRID_SIZE = 20
 GRID_WIDTH = WINDOW_WIDTH // GRID_SIZE
-GRID_HEIGHT = WINDOW_HEIGHT // GRID_SIZE
+GRID_HEIGHT = GAME_HEIGHT // GRID_SIZE
 
 # Colors (RGB)
 BLACK = (0, 0, 0)
@@ -32,6 +35,8 @@ DARK_RED = (139, 0, 0)
 APPLE_GREEN = (34, 139, 34)
 BLUE = (0, 0, 255)
 GRAY = (128, 128, 128)
+DARK_GRAY = (64, 64, 64)
+LIGHT_GRAY = (192, 192, 192)
 
 # Game settings
 INITIAL_SPEED = 10
@@ -55,6 +60,7 @@ class GameState(Enum):
     PAUSED = 3
     GAME_OVER = 4
     LEVEL_TRANSITION = 5
+    LEVEL_PREVIEW = 6
 
 class Snake:
     """Snake class to handle snake logic and rendering."""
@@ -66,9 +72,9 @@ class Snake:
     def reset(self):
         """Reset snake to initial state."""
         center_x = GRID_WIDTH // 2
-        center_y = GRID_HEIGHT // 2
-        self.body = [(center_x, center_y), (center_x - 1, center_y), (center_x - 2, center_y)]
-        self.direction = Direction.RIGHT
+        bottom_y = GRID_HEIGHT - 1  # Start at bottom
+        self.body = [(center_x, bottom_y), (center_x, bottom_y + 1), (center_x, bottom_y + 2)]
+        self.direction = Direction.UP  # Travel north
         self.grow_pending = 0
     
     def move(self):
@@ -114,8 +120,12 @@ class Snake:
             
         # Draw snake body segments as continuous rounded rectangles
         for i, (x, y) in enumerate(self.body):
+            # Only draw segments that are within the game area (not in header or beyond)
+            if y < 0 or y >= GRID_HEIGHT:
+                continue
+                
             center_x = x * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
-            center_y = y * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
+            center_y = y * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH + GAME_AREA_Y
             
             if i == 0:  # Head
                 # Draw head as a circle with gradient effect
@@ -129,14 +139,14 @@ class Snake:
                 pygame.draw.circle(screen, BLACK, (center_x + eye_offset//2, center_y - eye_offset//2), 2)
             else:  # Body
                 # Draw body segment as rounded rectangle
-                segment_rect = pygame.Rect(x * GRID_SIZE + 2 + FRAME_WIDTH, y * GRID_SIZE + 2 + FRAME_WIDTH, 
+                segment_rect = pygame.Rect(x * GRID_SIZE + 2 + FRAME_WIDTH, y * GRID_SIZE + 2 + FRAME_WIDTH + GAME_AREA_Y, 
                                          GRID_SIZE - 4, GRID_SIZE - 4)
                 
                 # Main body color
                 pygame.draw.rect(screen, DARK_GREEN, segment_rect, border_radius=6)
                 
                 # Add texture with lighter inner rectangle
-                inner_rect = pygame.Rect(x * GRID_SIZE + 4 + FRAME_WIDTH, y * GRID_SIZE + 4 + FRAME_WIDTH, 
+                inner_rect = pygame.Rect(x * GRID_SIZE + 4 + FRAME_WIDTH, y * GRID_SIZE + 4 + FRAME_WIDTH + GAME_AREA_Y, 
                                        GRID_SIZE - 8, GRID_SIZE - 8)
                 pygame.draw.rect(screen, LIGHT_GREEN, inner_rect, border_radius=4)
                 
@@ -148,10 +158,14 @@ class Snake:
             x1, y1 = self.body[i]
             x2, y2 = self.body[i + 1]
             
+            # Only draw connections if both segments are visible in game area
+            if (y1 < 0 or y1 >= GRID_HEIGHT) or (y2 < 0 or y2 >= GRID_HEIGHT):
+                continue
+            
             center_x1 = x1 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
-            center_y1 = y1 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
+            center_y1 = y1 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH + GAME_AREA_Y
             center_x2 = x2 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
-            center_y2 = y2 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
+            center_y2 = y2 * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH + GAME_AREA_Y
             
             # Draw thick line between segments
             pygame.draw.line(screen, DARK_GREEN, (center_x1, center_y1), (center_x2, center_y2), GRID_SIZE - 4)
@@ -181,7 +195,7 @@ class Food:
         """Draw the food as an apple on the screen."""
         x, y = self.position
         center_x = x * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
-        center_y = y * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH
+        center_y = y * GRID_SIZE + GRID_SIZE // 2 + FRAME_WIDTH + GAME_AREA_Y
         
         # Draw apple body (main red circle)
         apple_radius = GRID_SIZE // 2 - 2
@@ -221,10 +235,10 @@ class Obstacle:
     def draw(self, screen):
         """Draw obstacle blocks on the screen."""
         for x, y in self.positions:
-            rect = pygame.Rect(x * GRID_SIZE + FRAME_WIDTH, y * GRID_SIZE + FRAME_WIDTH, 
+            rect = pygame.Rect(x * GRID_SIZE + FRAME_WIDTH, y * GRID_SIZE + FRAME_WIDTH + GAME_AREA_Y, 
                              GRID_SIZE, GRID_SIZE)
             pygame.draw.rect(screen, BLUE, rect)
-            pygame.draw.rect(screen, WHITE, rect, 1)
+            pygame.draw.rect(screen, BLUE, rect, 1)
     
     def check_collision(self, position: Tuple[int, int]) -> bool:
         """Check if position collides with any obstacle."""
@@ -239,6 +253,17 @@ class LevelManager:
         self.obstacles = []
         self.generate_obstacles()
     
+    def is_in_snake_start_path(self, x: int, y: int) -> bool:
+        """Check if position is in the snake's initial path (5 grid squares from start)."""
+        start_x = GRID_WIDTH // 2
+        start_y = GRID_HEIGHT - 1
+        
+        # Check if position is in the snake's initial northward path
+        # Keep 5 grid squares clear in front of snake's starting direction
+        if x == start_x and start_y - 5 <= y <= start_y:
+            return True
+        return False
+    
     def generate_obstacles(self):
         """Generate obstacles for current level."""
         self.obstacles = []
@@ -247,32 +272,63 @@ class LevelManager:
             # No obstacles in level 1
             pass
         elif self.current_level == 2:
-            # Simple horizontal line in middle
-            obstacles = [(x, GRID_HEIGHT // 2) for x in range(GRID_WIDTH // 3, 2 * GRID_WIDTH // 3)]
-            self.obstacles.append(Obstacle(obstacles))
-        elif self.current_level == 3:
-            # Vertical lines on sides
-            left_line = [(5, y) for y in range(5, GRID_HEIGHT - 5)]
-            right_line = [(GRID_WIDTH - 6, y) for y in range(5, GRID_HEIGHT - 5)]
-            self.obstacles.append(Obstacle(left_line))
-            self.obstacles.append(Obstacle(right_line))
-        elif self.current_level == 4:
-            # Cross pattern
-            horizontal = [(x, GRID_HEIGHT // 2) for x in range(8, GRID_WIDTH - 8)]
-            vertical = [(GRID_WIDTH // 2, y) for y in range(8, GRID_HEIGHT - 8)]
-            self.obstacles.append(Obstacle(horizontal + vertical))
-        elif self.current_level == 5:
-            # Maze-like pattern
+            # Simple horizontal line in middle, but avoid snake start path
             obstacles = []
-            # Top and bottom barriers with gaps
-            obstacles.extend([(x, 8) for x in range(5, 15)])
-            obstacles.extend([(x, 8) for x in range(20, 30)])
-            obstacles.extend([(x, GRID_HEIGHT - 9) for x in range(10, 20)])
-            obstacles.extend([(x, GRID_HEIGHT - 9) for x in range(25, 35)])
-            # Side barriers
-            obstacles.extend([(8, y) for y in range(12, 18)])
-            obstacles.extend([(GRID_WIDTH - 9, y) for y in range(12, 18)])
-            self.obstacles.append(Obstacle(obstacles))
+            for x in range(GRID_WIDTH // 3, 2 * GRID_WIDTH // 3):
+                y = GRID_HEIGHT // 2
+                if not self.is_in_snake_start_path(x, y):
+                    obstacles.append((x, y))
+            if obstacles:
+                self.obstacles.append(Obstacle(obstacles))
+        elif self.current_level == 3:
+            # Vertical lines on sides, avoid snake start path
+            obstacles = []
+            for y in range(5, GRID_HEIGHT - 5):
+                if not self.is_in_snake_start_path(5, y):
+                    obstacles.append((5, y))
+                if not self.is_in_snake_start_path(GRID_WIDTH - 6, y):
+                    obstacles.append((GRID_WIDTH - 6, y))
+            if obstacles:
+                self.obstacles.append(Obstacle(obstacles))
+        elif self.current_level == 4:
+            # Cross pattern, avoid snake start path
+            obstacles = []
+            # Horizontal line
+            for x in range(8, GRID_WIDTH - 8):
+                y = GRID_HEIGHT // 2
+                if not self.is_in_snake_start_path(x, y):
+                    obstacles.append((x, y))
+            # Vertical line
+            for y in range(8, GRID_HEIGHT - 8):
+                x = GRID_WIDTH // 2
+                if not self.is_in_snake_start_path(x, y):
+                    obstacles.append((x, y))
+            if obstacles:
+                self.obstacles.append(Obstacle(obstacles))
+        elif self.current_level == 5:
+            # Maze-like pattern, avoid snake start path
+            obstacles = []
+            # Top and bottom barriers with gaps, avoid snake start path
+            for x in range(5, 15):
+                if not self.is_in_snake_start_path(x, 8):
+                    obstacles.append((x, 8))
+            for x in range(20, 30):
+                if not self.is_in_snake_start_path(x, 8):
+                    obstacles.append((x, 8))
+            for x in range(10, 20):
+                if not self.is_in_snake_start_path(x, GRID_HEIGHT - 9):
+                    obstacles.append((x, GRID_HEIGHT - 9))
+            for x in range(25, 35):
+                if not self.is_in_snake_start_path(x, GRID_HEIGHT - 9):
+                    obstacles.append((x, GRID_HEIGHT - 9))
+            # Side barriers, avoid snake start path
+            for y in range(12, 18):
+                if not self.is_in_snake_start_path(8, y):
+                    obstacles.append((8, y))
+                if not self.is_in_snake_start_path(GRID_WIDTH - 9, y):
+                    obstacles.append((GRID_WIDTH - 9, y))
+            if obstacles:
+                self.obstacles.append(Obstacle(obstacles))
         else:
             # Advanced levels - always have obstacles with increasing complexity
             obstacles = []
@@ -288,23 +344,28 @@ class LevelManager:
                     for j in range(cluster_size):
                         if random.random() < 0.7:  # 70% chance for each block (increased density)
                             x, y = center_x + i - cluster_size//2, center_y + j - cluster_size//2
-                            if 3 < x < GRID_WIDTH - 3 and 3 < y < GRID_HEIGHT - 3:
+                            if (3 < x < GRID_WIDTH - 3 and 3 < y < GRID_HEIGHT - 3 and
+                                not self.is_in_snake_start_path(x, y)):
                                 obstacles.append((x, y))
             
             # Add some guaranteed linear obstacles for higher levels
             if self.current_level >= 8:
-                # Add random horizontal and vertical lines
+                # Add random horizontal and vertical lines, avoid snake start path
                 for _ in range(self.current_level // 4):
                     if random.choice([True, False]):  # Horizontal line
                         y_pos = random.randint(5, GRID_HEIGHT - 6)
                         x_start = random.randint(5, GRID_WIDTH // 3)
                         x_end = random.randint(2 * GRID_WIDTH // 3, GRID_WIDTH - 5)
-                        obstacles.extend([(x, y_pos) for x in range(x_start, x_end)])
+                        for x in range(x_start, x_end):
+                            if not self.is_in_snake_start_path(x, y_pos):
+                                obstacles.append((x, y_pos))
                     else:  # Vertical line
                         x_pos = random.randint(5, GRID_WIDTH - 6)
                         y_start = random.randint(5, GRID_HEIGHT // 3)
                         y_end = random.randint(2 * GRID_HEIGHT // 3, GRID_HEIGHT - 5)
-                        obstacles.extend([(x_pos, y) for y in range(y_start, y_end)])
+                        for y in range(y_start, y_end):
+                            if not self.is_in_snake_start_path(x_pos, y):
+                                obstacles.append((x_pos, y))
             
             if obstacles:  # Only create obstacle if we have positions
                 self.obstacles.append(Obstacle(obstacles))
@@ -350,6 +411,7 @@ class Game:
         self.speed = INITIAL_SPEED
         self.portal_open = False
         self.transition_timer = 0
+        self.preview_timer = 0  # Timer for level preview countdown
         
         # Screensaver properties - reset these too
         self.auto_direction_timer = 0
@@ -366,6 +428,55 @@ class Game:
                 not self.level_manager.check_collision(self.food.position)):
                 break
     
+    def reset_snake_safely(self):
+        """Reset snake to a safe position that doesn't conflict with obstacles."""
+        # Start at bottom center, traveling north
+        center_x = GRID_WIDTH // 2
+        start_y = GRID_HEIGHT - 1  # Bottom of game area
+        
+        # Check if the initial bottom-center position is safe
+        initial_positions = [
+            (center_x, start_y),      # Head
+            (center_x, start_y + 1),  # Body (will be outside game area initially)
+            (center_x, start_y + 2)   # Tail (will be outside game area initially)
+        ]
+        
+        # Check if head position is clear of obstacles
+        if not self.level_manager.check_collision((center_x, start_y)):
+            # Position is safe, use it
+            self.snake.body = initial_positions
+            self.snake.direction = Direction.UP
+            self.snake.grow_pending = 0
+            print(f"Snake reset to bottom center position ({center_x}, {start_y}) for level {self.level_manager.current_level}")
+            return
+        
+        # If bottom center is blocked, try positions near the bottom
+        safe_positions = []
+        
+        # Try positions in the bottom few rows
+        for y in range(GRID_HEIGHT - 1, max(GRID_HEIGHT - 5, 0), -1):
+            for x_offset in range(-5, 6):  # Try positions around center
+                x = center_x + x_offset
+                if (0 <= x < GRID_WIDTH and 
+                    not self.level_manager.check_collision((x, y))):
+                    safe_positions.append((x, y))
+        
+        if safe_positions:
+            # Use the first safe position found (closest to bottom center)
+            start_x, start_y = safe_positions[0]
+            self.snake.body = [
+                (start_x, start_y), 
+                (start_x, start_y + 1), 
+                (start_x, start_y + 2)
+            ]
+            self.snake.direction = Direction.UP
+            self.snake.grow_pending = 0
+            print(f"Snake safely reset to position ({start_x}, {start_y}) for level {self.level_manager.current_level}")
+        else:
+            # Fallback: use default reset but change direction to UP
+            print(f"Warning: No safe position found for level {self.level_manager.current_level}, using default")
+            self.snake.reset()
+    
     def handle_input(self):
         """Handle keyboard and mouse input."""
         for event in pygame.event.get():
@@ -376,10 +487,19 @@ class Game:
                 if self.state == GameState.SCREENSAVER:
                     # Check if "New Game" button was clicked
                     mouse_x, mouse_y = event.pos
-                    button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 - 25, 200, 50)
+                    button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, GAME_AREA_Y + GAME_HEIGHT // 2 - 25, 200, 50)
                     if button_rect.collidepoint(mouse_x, mouse_y):
                         self.reset_game()
                         self.state = GameState.PLAYING
+                
+                elif self.state == GameState.LEVEL_TRANSITION:
+                    # Check if "Continue" button was clicked
+                    mouse_x, mouse_y = event.pos
+                    button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 + 40, 200, 50)
+                    if button_rect.collidepoint(mouse_x, mouse_y):
+                        # Start level preview
+                        self.state = GameState.LEVEL_PREVIEW
+                        self.preview_timer = 0
             
             if event.type == pygame.KEYDOWN:
                 if self.state == GameState.SCREENSAVER:
@@ -405,9 +525,16 @@ class Game:
                         self.state = GameState.PLAYING
                 
                 elif self.state == GameState.LEVEL_TRANSITION:
+                    if event.key == pygame.K_RETURN:
+                        # Start level preview
+                        self.state = GameState.LEVEL_PREVIEW
+                        self.preview_timer = 0
+                
+                elif self.state == GameState.LEVEL_PREVIEW:
+                    # Skip preview countdown if user presses any key
                     if event.key == pygame.K_SPACE:
                         self.state = GameState.PLAYING
-                        self.transition_timer = 0
+                        self.preview_timer = 0
                 
                 elif self.state == GameState.GAME_OVER:
                     if event.key == pygame.K_r:
@@ -508,24 +635,21 @@ class Game:
                 self.respawn_food_safely()
             
             # If snake gets too long, reset it
-            if len(self.snake.body) > 20:
+            if len(self.snake.body) > 100:
                 self.snake.reset()
             
             return
         
         if self.state == GameState.LEVEL_TRANSITION:
-            self.transition_timer += 1
-            if self.transition_timer > 180:  # 3 seconds at 60 FPS (fixed rate)
-                self.level_manager.next_level()
-                self.portal_open = False
-                self.apples_eaten = 0
-                
-                # Reset snake to starting position for new level
-                self.snake.reset()
-                self.respawn_food_safely()
-                
+            # Stay in transition state until user clicks Continue or presses Enter
+            return
+        
+        if self.state == GameState.LEVEL_PREVIEW:
+            self.preview_timer += 1
+            if self.preview_timer > 180:  # 3 seconds at 60 FPS
+                # Start the new level
                 self.state = GameState.PLAYING
-                self.transition_timer = 0
+                self.preview_timer = 0
             return
         
         if self.state != GameState.PLAYING:
@@ -540,7 +664,17 @@ class Game:
         
         # Check if snake has fully exited through portal first (before other collision checks)
         if self.portal_open and self.snake_fully_through_portal():
-            # Transition to next level
+            # Prepare for next level
+            self.level_manager.next_level()
+            self.portal_open = False
+            self.apples_eaten = 0
+            self.speed = INITIAL_SPEED  # Reset speed for each level
+            
+            # Reset snake to a safe starting position for new level
+            self.reset_snake_safely()
+            self.respawn_food_safely()
+            
+            # Transition to level complete screen
             self.state = GameState.LEVEL_TRANSITION
             self.transition_timer = 0
             return
@@ -604,18 +738,24 @@ class Game:
         """Draw the game screen."""
         self.screen.fill(BLACK)
         
-        # Draw blue frame around the arena
-        frame_rect = pygame.Rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)
-        pygame.draw.rect(self.screen, BLUE, frame_rect, FRAME_WIDTH)
+        # Draw header area
+        header_rect = pygame.Rect(0, 0, WINDOW_WIDTH, HEADER_HEIGHT)
+        pygame.draw.rect(self.screen, DARK_GRAY, header_rect)
+        pygame.draw.rect(self.screen, LIGHT_GRAY, header_rect, 2)  # Border
+        
+        # Draw game area background and frame
+        game_rect = pygame.Rect(0, GAME_AREA_Y, WINDOW_WIDTH, GAME_HEIGHT)
+        pygame.draw.rect(self.screen, BLACK, game_rect)
+        pygame.draw.rect(self.screen, BLUE, game_rect, FRAME_WIDTH)
         
         # Draw portal opening if active
         if self.portal_open:
             portal_center = WINDOW_WIDTH // 2
             portal_left = portal_center - PORTAL_WIDTH // 2
-            portal_rect = pygame.Rect(portal_left, 0, PORTAL_WIDTH, FRAME_WIDTH)
+            portal_rect = pygame.Rect(portal_left, GAME_AREA_Y, PORTAL_WIDTH, FRAME_WIDTH)
             pygame.draw.rect(self.screen, BLACK, portal_rect)
             # Add glowing effect around portal
-            glow_rect = pygame.Rect(portal_left - 5, 0, PORTAL_WIDTH + 10, FRAME_WIDTH + 5)
+            glow_rect = pygame.Rect(portal_left - 5, GAME_AREA_Y, PORTAL_WIDTH + 10, FRAME_WIDTH + 5)
             pygame.draw.rect(self.screen, (100, 200, 255), glow_rect, 2)
         
         # Draw level obstacles
@@ -625,15 +765,15 @@ class Game:
         self.snake.draw(self.screen)
         self.food.draw(self.screen)
         
-        # Draw score and level info
+        # Draw header info with better contrast
         level_text = f"Level: {self.level_manager.current_level}"
-        self.draw_text(level_text, 70, 30)
+        self.draw_text(level_text, 80, HEADER_HEIGHT // 2, color=WHITE)
         
         score_text = f"Score: {self.score}"
-        self.draw_text(score_text, WINDOW_WIDTH - 70, 30)
+        self.draw_text(score_text, WINDOW_WIDTH - 80, HEADER_HEIGHT // 2, color=WHITE)
         
         apples_text = f"Apples: {self.apples_eaten}/{APPLES_PER_LEVEL}"
-        self.draw_text(apples_text, WINDOW_WIDTH // 2, 30)
+        self.draw_text(apples_text, WINDOW_WIDTH // 2, HEADER_HEIGHT // 2, color=WHITE)
     
     def draw_paused(self):
         """Draw the pause screen."""
@@ -659,44 +799,16 @@ class Game:
         self.draw_text("Press ESC to Quit", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 100)
     
     def draw_level_transition(self):
-        """Draw the level transition screen."""
+        """Draw the level completion screen with continue button."""
         self.screen.fill(BLACK)
         
-        self.draw_text(f"LEVEL {self.level_manager.current_level} COMPLETE!", 
-                      WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 60, self.big_font, GREEN)
-        self.draw_text(f"Entering Level {self.level_manager.current_level + 1}...", 
-                      WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 20)
+        self.draw_text(f"LEVEL {self.level_manager.current_level - 1} COMPLETE!", 
+                      WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 80, self.big_font, GREEN)
+        self.draw_text(f"Level {self.level_manager.current_level} Next...", 
+                      WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 - 20)
         
-        # Show countdown
-        countdown = 3 - (self.transition_timer // 60)
-        if countdown > 0:
-            self.draw_text(f"{countdown}", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 60, 
-                          self.big_font, WHITE)
-
-    def draw_screensaver(self):
-        """Draw the screensaver with autonomous snake and New Game button."""
-        # Draw the same game background
-        self.screen.fill(BLACK)
-        
-        # Draw blue frame around the arena
-        frame_rect = pygame.Rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT)
-        pygame.draw.rect(self.screen, BLUE, frame_rect, FRAME_WIDTH)
-        
-        # Draw level obstacles (screensaver uses level 1 - no obstacles)
-        self.level_manager.draw(self.screen)
-        
-        # Draw game objects
-        self.snake.draw(self.screen)
-        self.food.draw(self.screen)
-        
-        # Draw semi-transparent overlay
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-        overlay.set_alpha(100)
-        overlay.fill(BLACK)
-        self.screen.blit(overlay, (0, 0))
-        
-        # Draw "New Game" button
-        button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 - 25, 200, 50)
+        # Draw "Continue" button
+        button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, WINDOW_HEIGHT // 2 + 40, 200, 50)
         
         # Check if mouse is hovering over button
         mouse_pos = pygame.mouse.get_pos()
@@ -712,7 +824,98 @@ class Game:
         
         # Draw button text
         button_font = pygame.font.Font(None, 48)
-        self.draw_text("New Game", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2, button_font, WHITE)
+        self.draw_text("Continue", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 65, button_font, WHITE)
+        
+        # Show keyboard shortcut
+        self.draw_text("Press ENTER to continue", WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2 + 120)
+
+    def draw_level_preview(self):
+        """Draw the level preview with countdown."""
+        # Draw the game background with new level obstacles
+        self.screen.fill(BLACK)
+        
+        # Draw header area
+        header_rect = pygame.Rect(0, 0, WINDOW_WIDTH, HEADER_HEIGHT)
+        pygame.draw.rect(self.screen, DARK_GRAY, header_rect)
+        pygame.draw.rect(self.screen, LIGHT_GRAY, header_rect, 2)  # Border
+        
+        # Draw game area background and frame
+        game_rect = pygame.Rect(0, GAME_AREA_Y, WINDOW_WIDTH, GAME_HEIGHT)
+        pygame.draw.rect(self.screen, BLACK, game_rect)
+        pygame.draw.rect(self.screen, BLUE, game_rect, FRAME_WIDTH)
+        
+        # Draw level obstacles
+        self.level_manager.draw(self.screen)
+        
+        # Draw game objects (snake and food in their new positions)
+        self.snake.draw(self.screen)
+        self.food.draw(self.screen)
+        
+        # Draw semi-transparent overlay over game area only
+        overlay = pygame.Surface((WINDOW_WIDTH, GAME_HEIGHT))
+        overlay.set_alpha(150)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, GAME_AREA_Y))
+        
+        # Draw level info
+        self.draw_text(f"LEVEL {self.level_manager.current_level}", 
+                      WINDOW_WIDTH // 2, GAME_AREA_Y + GAME_HEIGHT // 2 - 60, self.big_font, GREEN)
+        
+        # Show countdown
+        countdown = 3 - (self.preview_timer // 60)
+        if countdown > 0:
+            self.draw_text(f"Starting in {countdown}...", WINDOW_WIDTH // 2, GAME_AREA_Y + GAME_HEIGHT // 2, 
+                          self.big_font, WHITE)
+        else:
+            self.draw_text("GO!", WINDOW_WIDTH // 2, GAME_AREA_Y + GAME_HEIGHT // 2, 
+                          self.big_font, GREEN)
+
+    def draw_screensaver(self):
+        """Draw the screensaver with autonomous snake and New Game button."""
+        # Draw the same game background
+        self.screen.fill(BLACK)
+        
+        # Draw header area
+        header_rect = pygame.Rect(0, 0, WINDOW_WIDTH, HEADER_HEIGHT)
+        pygame.draw.rect(self.screen, DARK_GRAY, header_rect)
+        pygame.draw.rect(self.screen, LIGHT_GRAY, header_rect, 2)  # Border
+        
+        # Draw game area background and frame
+        game_rect = pygame.Rect(0, GAME_AREA_Y, WINDOW_WIDTH, GAME_HEIGHT)
+        pygame.draw.rect(self.screen, BLACK, game_rect)
+        pygame.draw.rect(self.screen, BLUE, game_rect, FRAME_WIDTH)
+        
+        # Draw level obstacles (screensaver uses level 1 - no obstacles)
+        self.level_manager.draw(self.screen)
+        
+        # Draw game objects
+        self.snake.draw(self.screen)
+        self.food.draw(self.screen)
+        
+        # Draw semi-transparent overlay over game area only
+        overlay = pygame.Surface((WINDOW_WIDTH, GAME_HEIGHT))
+        overlay.set_alpha(100)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, GAME_AREA_Y))
+        
+        # Draw "New Game" button
+        button_rect = pygame.Rect(WINDOW_WIDTH // 2 - 100, GAME_AREA_Y + GAME_HEIGHT // 2 - 25, 200, 50)
+        
+        # Check if mouse is hovering over button
+        mouse_pos = pygame.mouse.get_pos()
+        is_hovering = button_rect.collidepoint(mouse_pos)
+        
+        # Button colors
+        button_color = (0, 150, 0) if is_hovering else (0, 100, 0)
+        border_color = (0, 255, 0) if is_hovering else (0, 200, 0)
+        
+        # Draw button
+        pygame.draw.rect(self.screen, button_color, button_rect, border_radius=10)
+        pygame.draw.rect(self.screen, border_color, button_rect, 3, border_radius=10)
+        
+        # Draw button text
+        button_font = pygame.font.Font(None, 48)
+        self.draw_text("New Game", WINDOW_WIDTH // 2, GAME_AREA_Y + GAME_HEIGHT // 2, button_font, WHITE)
 
     def draw(self):
         """Draw the current game state."""
@@ -726,6 +929,8 @@ class Game:
             self.draw_game_over()
         elif self.state == GameState.LEVEL_TRANSITION:
             self.draw_level_transition()
+        elif self.state == GameState.LEVEL_PREVIEW:
+            self.draw_level_preview()
         
         pygame.display.flip()
     
